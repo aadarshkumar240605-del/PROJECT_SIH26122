@@ -6,10 +6,12 @@ so any team member can read the code and understand the system flow.
 """
 
 from datetime import datetime, date
+from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from database import get_db
+from extractor import extract_report
 from matcher import match_report
 
 router = APIRouter()
@@ -38,6 +40,26 @@ class ConfirmMatchPayload(BaseModel):
 class ReportIdPayload(BaseModel):
     """Used to reject / mark a report as unplanned."""
     report_id: int
+
+
+class ExtractRequest(BaseModel):
+    """Input for the /extract endpoint — the raw field report text."""
+    report_text: str = Field(..., min_length=1, description="Raw field report text to extract activities from")
+
+
+class Activity(BaseModel):
+    """A single construction activity extracted from a field report."""
+    activity: str
+    location: str | None = None
+    date: str | None = None           # ISO date resolved by extractor post-processing
+    status: Literal["completed", "in_progress", "pending", "delayed", "unknown"] = "unknown"
+    progress_percent: int | None = Field(default=None, ge=0, le=100)
+
+
+class ExtractResponse(BaseModel):
+    """Structured output returned by the /extract endpoint."""
+    activities: list[Activity]
+    issues: list[str]
 
 
 # ---------------------------------------------------------------------------
@@ -327,3 +349,30 @@ def activities(discipline: str | None = Query(default=None)):
         else:
             rows = conn.execute("SELECT * FROM schedule_items").fetchall()
     return [dict(row) for row in rows]
+
+
+@router.post("/extract", response_model=ExtractResponse)
+def extract(payload: ExtractRequest):
+    """Extract structured activity data from a plain-language field report.
+
+    Why: Field workers submit voice or text reports in natural language.
+    This endpoint sends that text to Ollama (llama3.2:3b) and returns
+    structured data (activity name, location, date, status, progress %)
+    ready for the scheduler to match against the Primavera baseline.
+
+    Flow:
+        1. Pydantic validates report_text (non-empty enforced by ExtractRequest)
+        2. Known locations are loaded from schedule_items in the DB
+        3. Ollama extraction function parses the text
+        4. Deterministic post-processing validates locations, dates, progress
+        5. Result is validated and returned as ExtractResponse
+    """
+    try:
+        result = extract_report(payload.report_text)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Extraction service error: {exc}",
+        ) from exc
+
+    return ExtractResponse(**result)

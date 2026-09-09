@@ -1,0 +1,158 @@
+[
+  {
+    "category": "easy",
+    "text": "Completed trench excavation in Zone B today. Work finished at 1700 hrs, all spoil removed and area cleared."
+  },
+  {
+    "category": "easy",
+    "text": "Foundation pour for the control room in Zone D is done. Concrete achieved full design depth and surface was levelled by the evening shift."
+  },
+  {
+    "category": "easy",
+    "text": "Cable laying in Section D-2 is 70% complete. 280 metres laid so far, remaining 120 metres scheduled for tomorrow morning."
+  },
+  {
+    "category": "easy",
+    "text": "Valve installation at Site C pump station 2 completed successfully. All flanges torqued and pressure test passed at 1400 hrs."
+  },
+  {
+    "category": "medium",
+    "text": "Pipe welding near tank 3 ongoing. Some sections done but not all. Team working through the afternoon."
+  },
+  {
+    "category": "medium",
+    "text": "Structural erection work was carried out today in Zone D. Progress is reasonable but we had to stop early due to wind."
+  },
+  {
+    "category": "medium",
+    "text": "HT cable pulling in the substation area \u2014 workers were on site most of the day. About half the route is done I think."
+  },
+  {
+    "category": "medium",
+    "text": "Excavation work happened in the northern section. Not sure exactly how much was done, foreman will update tomorrow."
+  },
+  {
+    "category": "hard",
+    "text": "Work done today."
+  },
+  {
+    "category": "hard",
+    "text": "Team was on site."
+  },
+  {
+    "category": "hard",
+    "text": "Some progress was made on the pipeline. Details to follow."
+  },
+  {
+    "category": "missing_location",
+    "text": "Trench excavation completed today, approximately 60 metres. No delays reported."
+  },
+  {
+    "category": "missing_location",
+    "text": "Transformer foundation and mounting work is in progress. About 40% done. Location of the unit not confirmed yet."
+  },
+  {
+    "category": "multi_phrasing",
+    "text": "Finished digging the trench in Zone B. All excavation work for the pipeline corridor is complete."
+  },
+  {
+    "category": "multi_phrasing",
+    "text": "Zone B pipeline trench has been fully excavated as of today. The ground has been cleared and is ready for pipe laying."
+  },
+  {
+    "category": "multi_phrasing",
+    "text": "Trench digging in the Zone B corridor is done. Ground team wrapped up the excavation by mid-afternoon and moved off site."
+  },
+  {
+    "category": "multi_activity",
+    "text": "Today we completed the concrete pouring for the tank base in Zone A. Pipe spool fabrication in Zone A is also done. Cable tray installation in Zone C substation is about 30% complete. Earthing and grounding work has not started yet."
+  },
+  {
+    "category": "multi_activity",
+    "text": "Pipeline welding joints in Zone B are 80% complete. Pipe support installation is in progress at about 50%. Road crossing bore is still pending \u2014 waiting for contractor approval."
+  },
+  {
+    "category": "delays_issues",
+    "text": "Cable laying in Zone B was halted this morning due to heavy rain. About 20% of the route was completed before the shutdown. Equipment has been secured on site."
+  },
+  {
+    "category": "delays_issues",
+    "text": "Switchgear panel installation in Zone D control room is delayed. Supplier delivered the wrong panel spec \u2014 11kV instead of 33kV. Work cannot resume until correct equipment arrives. Approximately 3-day delay expected. Additionally, scaffolding in Zone C substation collapsed overnight causing access issues for the HT cable pulling crew."
+  },
+  {
+    "category": "location_inheritance_multi_zone",
+    "text": "Today we completed the concrete pouring for the tank base in Zone A. Pipe spool fabrication in Zone A is also done. Cable tray installation in Zone C substation is about 30% complete. Earthing and grounding work has not started yet.",
+    "assertions": {
+      "description": "Regression: each activity receives only the location stated in its own sentence. Earthing and grounding work (sentence 4) must NOT inherit Zone C - Substation from sentence 3.",
+      "activity_checks": [
+        {
+          "activity_contains": "Concrete pouring",
+          "expected_location": "Zone A - Tank Farm",
+          "expected_status": "completed"
+        },
+        {
+          "activity_contains": "Pipe spool fabrication",
+          "expected_location": "Zone A - Tank Farm",
+          "expected_status": "completed"
+        },
+        {
+          "activity_contains": "Cable tray installation",
+          "expected_location": "Zone C - Substation",
+          "expected_status": "in_progress"
+        },
+        {
+          "activity_contains": "Earthing and grounding",
+          "expected_location": null,
+          "expected_status": "pending",
+          "critical": "Earthing and grounding MUST NOT inherit Zone C - Substation from the previous sentence"
+        }
+      ]
+    }
+  },
+  {
+    "category": "location_inheritance_single_zone",
+    "text": "Pipeline welding joints in Zone B are 80% complete. Pipe support installation is in progress at about 50%. Road crossing bore is still pending \u2014 waiting for contractor approval.",
+    "assertions": {
+      "description": "Regression: Pipe support installation (sentence 2) and Road crossing bore (sentence 3) must NOT inherit Zone B from sentence 1.",
+      "activity_checks": [
+        {
+          "activity_contains": "Pipeline welding",
+          "expected_location": "Zone B - Pipeline Corridor",
+          "expected_status": "in_progress"
+        },
+        {
+          "activity_contains": "Pipe support installation",
+          "expected_location": null,
+          "critical": "Pipe support installation MUST NOT inherit Zone B - Pipeline Corridor from sentence 1"
+        },
+        {
+          "activity_contains": "Road crossing bore",
+          "expected_location": null,
+          "expected_status": "pending",
+          "critical": "Road crossing bore MUST NOT inherit Zone B - Pipeline Corridor from sentence 1"
+        }
+      ],
+      "issue_checks": [
+        {
+          "issue_contains": "contractor approval",
+          "critical": "Contractor approval blocker must appear as an issue"
+        }
+      ]
+    }
+  },
+  {
+    "category": "vague_input_partial_extraction",
+    "text": "made some progress on the trenches",
+    "assertions": {
+      "description": "Vague input: 'trenches' is sufficient evidence for canonical activity 'Trench excavation'. No location stated \u2192 null. No percentage stated \u2192 null. 'made some progress' \u2192 in_progress.",
+      "activity_checks": [
+        {
+          "activity_contains": "Trench excavation",
+          "expected_location": null,
+          "expected_status": "in_progress",
+          "critical": "Must extract 'Trench excavation' from 'trenches'; must NOT invent a location or progress_percent"
+        }
+      ]
+    }
+  }
+]
