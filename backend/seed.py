@@ -5,7 +5,13 @@ Run this AFTER init_db.py:
     python init_db.py
     python seed.py
 
-Safe to re-run: uses INSERT OR IGNORE so duplicates are skipped.
+Safe to re-run (idempotent):
+  - schedule_items uses INSERT OR IGNORE on explicit IDs, so duplicates
+    are skipped automatically.
+  - task_history has no natural unique key, so this script DELETEs only
+    the specific (task_type, planned_duration_days, actual_duration_days,
+    delay_reason) tuples it owns before re-inserting them.  Rows created
+    by real field activity (via routes.py) are never touched.
 """
 
 from database import get_db
@@ -81,7 +87,23 @@ def seed():
             SCHEDULE_ITEMS,
         )
 
-        # Seed task history
+        # Seed task history — idempotent.
+        #
+        # task_history has no natural unique key (only an auto-increment id),
+        # so INSERT OR IGNORE cannot detect duplicates here.  Instead we
+        # delete any existing rows that exactly match the tuples this script
+        # owns, then re-insert them.  This leaves rows written by real field
+        # activity (via /submit) completely untouched.
+        conn.executemany(
+            """DELETE FROM task_history
+               WHERE task_type = ?
+                 AND planned_duration_days = ?
+                 AND actual_duration_days = ?
+                 AND (delay_reason IS ? OR delay_reason = ?)""",
+            # Pass each reason twice: once for the IS ? (NULL check) and
+            # once for the = ? (non-NULL equality check).
+            [(r[0], r[1], r[2], r[3], r[3]) for r in TASK_HISTORY],
+        )
         conn.executemany(
             """INSERT INTO task_history
                (task_type, planned_duration_days, actual_duration_days, delay_reason)

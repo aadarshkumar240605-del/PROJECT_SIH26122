@@ -61,7 +61,7 @@ def fresh_db():
     _test_conn = None  # Force a new connection for each test
 
     # Patch both database functions so all app code uses our test DB
-    with patch("database.get_db", _get_test_db), \
+    with patch("routes.get_db", _get_test_db), \
          patch("database.get_db_connection", _get_test_db_connection), \
          patch("matcher.get_db", _get_test_db):
         # Import app AFTER patching so routes pick up the patched DB
