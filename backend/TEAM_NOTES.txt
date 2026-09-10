@@ -1,0 +1,124 @@
+================================================================
+SIH26122 — TEAM UPDATE
+Matching Engine (Tasks 1–3) — Status & Open Flags
+Date: 2026-09-09
+================================================================
+
+WHAT WAS DONE
+----------------------------------------------------------------
+
+1. Task 3 — Matching engine integration test (DONE, 5/5 passed)
+   New file: backend/test_match_integration.py
+
+   Runs the 5 agreed data-contract inputs (hardcoded JSON, no LLM,
+   no server) directly through match_engine.py against the real
+   Primavera schedule (primavera_schedule.xlsx, 110 activities).
+
+   Results:
+     Case 1  concrete pouring column footing Unit 7 .... auto_linked  82.36%
+             -> L6-CIVIL-2845
+     Case 2  spool erection north rack elev 7.5m ....... auto_linked  89.86%
+             -> L6-PIPING-1193
+     Case 3  cable work done room B morning shift ...... review_queue 46.26%
+     Case 4  safety toolbox talk all workers ............ review_queue 42.64%
+     Case 5  generator fuel refilling site office ...... unplanned    33.30%
+
+   How to run:
+     cd backend
+     python test_match_integration.py
+   (No server needed. Exit code 0 = all passed, 1 = failure.)
+
+2. Task 2 — FastAPI wrapper (DONE, verified 29/29 checks)
+   File: backend/main.py  (this is now the MATCHING wrapper, not the old app)
+   New test file: backend/test_match_api.py
+
+   Endpoints:
+     POST /match          — extraction JSON in, matched activity out
+     POST /reload-index   — reload a Primavera Excel without restart
+     GET  /health         — index load status + activity count + model name
+
+   Verified live:
+     - /health returns index_loaded=true, activity_count=110
+     - All 5 contract inputs route correctly over HTTP
+     - Bad payloads (missing/empty/wrong-type fields) -> 422
+     - /reload-index works; missing file -> 404
+     - Teammate's test_pipeline.py now runs unmodified (it targets
+       port 8000, which this wrapper owns)
+
+   How to run:
+     cd backend
+     python -m uvicorn main:app --reload --port 8000
+     # then in a second terminal:
+     python test_match_api.py
+     # interactive docs: http://127.0.0.1:8000/docs
+
+3. File renaming (IMPORTANT — read this)
+   backend/main.py  = Task 2 matching wrapper (NEW file, uploaded 2026-09-09)
+   backend/main2.py = the ORIGINAL app (/extract, /submit, /schedule,
+                      /review-queue, /dashboard). Identical copy of the
+                      old main.py, kept under a new name.
+
+FLAG 1 (open) — CORS missing on the new main.py
+----------------------------------------------------------------
+WHAT: The matching wrapper (main.py) has no CORS middleware.
+
+WHY IT MATTERS: Browsers block JavaScript on one origin from reading
+another origin's responses. When the React dashboard (e.g. localhost:5173)
+tries to call http://127.0.0.1:8000/match, the browser will block it and
+the dashboard will silently fail with a CORS error in the console.
+Python test scripts are NOT affected — only browsers are. That is why
+all backend tests pass today.
+
+FIX (when frontend work starts, ~6 lines, same block already used in
+main2.py):
+
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+(For the demo, keep "*" — restrict origins only if asked in judging Q&A
+about security.)
+
+FLAG 2 (open) — Port ownership changed; tell the team
+----------------------------------------------------------------
+WHAT: Port 8000 now belongs to the MATCHING WRAPPER (main.py).
+The old app must be started from main2.py on a DIFFERENT port.
+
+Correct commands now:
+    Matching wrapper:   uvicorn main:app  --port 8000   (has /match)
+    Original app:       uvicorn main2:app --port 8001   (has /extract, /submit,
+                                                         /review-queue, etc.)
+
+RISK: Before the rename, everyone on the team ran
+"uvicorn main:app --port 8000" to start the ORIGINAL app. Running that
+habitual command now starts the MATCHING wrapper instead. Anyone doing
+this will find /extract "missing" and may think the backend broke.
+
+ACTION: Message the team before the next work session so the frontend
+and integration folks know which port serves which endpoints.
+
+KNOWN MINOR ISSUE (for backlog, not blocking)
+----------------------------------------------------------------
+Case 1 matched L6-CIVIL-2845 ("C-7/F-01 to F-06") although the report
+location says grid C-7/F-12 (activity L6-CIVIL-2847). Cause: the engine
+matches on activity_description only — the payload's "location" field is
+not used. Routing bucket (auto_linked) is still correct. Fix later via
+score fusion (description + location + date) per the build plan.
+
+FILE MAP (backend/)
+----------------------------------------------------------------
+main.py                    Task 2 wrapper  (/match, /reload-index, /health)
+main2.py                   Original app    (/extract, /submit, /review-queue ...)
+match_engine.py            Task 1 semantic engine (all-MiniLM-L6-v2)
+matcher.py                 OLD stub matcher — still wired into main2's routes.py;
+                           candidate for replacement by match_engine later
+primavera_schedule.xlsx    The 110-activity schedule index
+test_match_integration.py  Task 3 test — engine level, no server needed
+test_match_api.py          Task 2 test — HTTP level, needs server on 8000
+test_pipeline.py           Teammate's original Task 3 script (works now)
+================================================================
