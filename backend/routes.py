@@ -10,9 +10,10 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from contract import extract_response_to_match_payloads
 from database import get_db
 from extractor import extract_report
-from matcher import match_report
+from match_engine import match_activity
 
 router = APIRouter()
 
@@ -22,42 +23,63 @@ router = APIRouter()
 # Using models gives us automatic validation and clear documentation.
 # ---------------------------------------------------------------------------
 
+
 class ReportPayload(BaseModel):
     """The contract defined by the extraction team. Do NOT rename these fields."""
+
     task: str
     quantity: str | None = None
     location: str | None = None
-    date: str | None = None       # ISO date string from the extraction step
+    date: str | None = None  # ISO date string from the extraction step
     raw_text: str
+
+
+class SubmitFieldReportRequest(BaseModel):
+    """Plain-text field report payload accepted by the new /submit endpoint."""
+
+    report_text: str = Field(
+        ..., min_length=1, description="Raw field report text to extract and match"
+    )
 
 
 class ConfirmMatchPayload(BaseModel):
     """Used by the review UI to manually confirm a match."""
+
     report_id: int
     schedule_id: int
 
 
 class ReportIdPayload(BaseModel):
     """Used to reject / mark a report as unplanned."""
+
     report_id: int
 
 
 class ExtractRequest(BaseModel):
     """Input for the /extract endpoint — the raw field report text."""
-    report_text: str = Field(..., min_length=1, description="Raw field report text to extract activities from")
+
+    report_text: str = Field(
+        ...,
+        min_length=1,
+        description="Raw field report text to extract activities from",
+    )
 
 
 class Activity(BaseModel):
     """A single construction activity extracted from a field report."""
+
     activity: str
     location: str | None = None
-    date: str | None = None           # ISO date resolved by extractor post-processing
-    status: Literal["completed", "in_progress", "pending", "delayed", "unknown"] = "unknown"
+    date: str | None = None  # ISO date resolved by extractor post-processing
+    status: Literal["completed", "in_progress", "pending", "delayed", "unknown"] = (
+        "unknown"
+    )
     progress_percent: int | None = Field(default=None, ge=0, le=100)
 
 
 class ExtractResponse(BaseModel):
     """Structured output returned by the /extract endpoint."""
+
     activities: list[Activity]
     issues: list[str]
 
@@ -65,6 +87,7 @@ class ExtractResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Helper: apply a match (used by both auto-match and manual confirm)
 # ---------------------------------------------------------------------------
+
 
 def _apply_match(conn, schedule_id: int, completion_date: str):
     """Mark a schedule item as 'done' and record it in task_history.
@@ -111,6 +134,7 @@ def _apply_match(conn, schedule_id: int, completion_date: str):
 # ENDPOINTS
 # ---------------------------------------------------------------------------
 
+
 @router.get("/schedule")
 def get_schedule():
     """Return all rows from schedule_items.
@@ -125,72 +149,97 @@ def get_schedule():
 
 
 @router.post("/submit")
-def submit_report(payload: ReportPayload):
-    """Accept a field report from the extraction pipeline and process it.
-
-    Why: This is the main entry point for new data. The extraction team
-    sends us structured JSON; we match it against the schedule and
-    decide whether to auto-apply, flag for review, or mark as no-match.
+def submit_report(payload: SubmitFieldReportRequest):
+    """Accept a plain-text field report, extract activities, map them to
+    the locked /match contract, and return match results for every activity.
 
     Flow:
-      1. Call the matcher to get a candidate schedule_id + confidence
-      2. Branch on confidence:
-         >= 0.80 → auto-apply (update schedule, insert task_history)
-         0.50–0.79 → needs_review (human must confirm)
-         < 0.50  → no_match
-      3. Always insert a row into reports for the audit trail
+      1. Call extract_report(report_text)
+      2. Convert each extracted activity via contract.extract_response_to_match_payloads
+      3. For each contract payload, call match_activity(...)
+      4. Persist one reports row per result (audit trail — keeps
+         /review-queue, /audit-trail and /dashboard alive)
+      5. Return the results array along with any extraction issues
+
+    Persistence rules:
+      - review_status maps from match_status: auto_linked -> auto_applied,
+        review_queue -> needs_review, unplanned -> no_match.
+      - matched_activity_code stores the Primavera activity_id string.
+      - matched_schedule_id stays NULL for now: auto-applying (marking the
+        schedule item done) requires the Primavera schedule to be imported
+        into schedule_items, which is a pending task. Until then,
+        /confirm-match remains the manual path once that import exists.
+      - confidence_score is stored on the legacy 0.0–1.0 scale
+        (engine confidence / 100) to stay consistent with the thresholds
+        used elsewhere in this module.
     """
-    extracted = {
-        "task": payload.task,
-        "quantity": payload.quantity,
-        "location": payload.location,
-        "date": payload.date,
-        "raw_text": payload.raw_text,
-    }
+    extraction = extract_report(payload.report_text)
+    contract_payloads, issues = extract_response_to_match_payloads(extraction)
 
-    # Step 1: Ask the matcher for a candidate
-    result = match_report(extracted)
-    schedule_id = result["schedule_id"]
-    confidence = result["confidence"]
-
-    # Step 2: Decide what to do based on confidence
-    if confidence >= 0.80:
-        review_status = "auto_applied"
-    elif confidence >= 0.50:
-        review_status = "needs_review"
-    else:
-        review_status = "no_match"
-
-    with get_db() as conn:
-        # Step 3a: If auto-applying, update the schedule and log history
-        if review_status == "auto_applied" and schedule_id is not None:
-            completion_date = payload.date or datetime.now().strftime("%Y-%m-%d")
-            _apply_match(conn, schedule_id, completion_date)
-
-        # Step 3b: Always insert the report (this IS the audit trail)
-        conn.execute(
-            """INSERT INTO reports
-               (raw_text, extracted_task, extracted_quantity,
-                extracted_location, extracted_date,
-                matched_schedule_id, confidence_score, review_status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                payload.raw_text,
-                payload.task,
-                payload.quantity,
-                payload.location,
-                payload.date,
-                schedule_id,
-                confidence,
-                review_status,
+    if not contract_payloads:
+        return {
+            "results": [],
+            "issues": (
+                issues
+                if issues
+                else ["No extractable activities were found in the report."]
             ),
+        }
+
+    results = []
+    for item in contract_payloads:
+        try:
+            result = match_activity(
+                extracted_description=item["activity_description"],
+                discipline=item.get("discipline"),
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Matching engine error: {str(exc)}"
+            )
+
+        results.append(
+            {
+                "matched_activity_id": result["matched_activity_id"],
+                "matched_activity_name": result["matched_activity_name"],
+                "confidence_score": result["confidence_score"],
+                "match_status": result["match_status"],
+                "rejection_reason": result.get("rejection_reason"),
+            }
         )
+
+    # ---- persistence: one audit row per matched activity ----
+    STATUS_TO_REVIEW = {
+        "auto_linked": "auto_applied",
+        "review_queue": "needs_review",
+        "unplanned": "no_match",
+    }
+    with get_db() as conn:
+        for item, result in zip(contract_payloads, results):
+            conn.execute(
+                """INSERT INTO reports
+                   (raw_text, extracted_task, extracted_location, extracted_date,
+                    matched_activity_code, confidence_score, review_status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    payload.report_text,
+                    item["activity_description"],
+                    item.get("location"),
+                    item.get("actual_start"),
+                    result["matched_activity_id"],
+                    result["confidence_score"] / 100.0,
+                    STATUS_TO_REVIEW[result["match_status"]],
+                ),
+            )
         conn.commit()
 
     return {
-        "review_status": review_status,
-        "matched_schedule_id": schedule_id,
-        "confidence": confidence,
+        "results": results,
+        "issues": issues,
     }
 
 
@@ -206,16 +255,14 @@ def review_queue():
         # LEFT JOIN so we get the candidate schedule item's details
         # alongside the report.  If matched_schedule_id is NULL, the
         # schedule columns will just be NULL.
-        rows = conn.execute(
-            """SELECT r.*, s.task_name AS candidate_task,
+        rows = conn.execute("""SELECT r.*, s.task_name AS candidate_task,
                       s.discipline AS candidate_discipline,
                       s.location AS candidate_location,
                       s.planned_start, s.planned_end
                FROM reports r
                LEFT JOIN schedule_items s ON r.matched_schedule_id = s.id
                WHERE r.review_status = 'needs_review'
-               ORDER BY r.created_at DESC"""
-        ).fetchall()
+               ORDER BY r.created_at DESC""").fetchall()
     return [dict(row) for row in rows]
 
 
@@ -242,7 +289,9 @@ def confirm_match(payload: ConfirmMatchPayload):
             )
 
         # Use the extracted date from the report, or today as fallback
-        completion_date = report["extracted_date"] or datetime.now().strftime("%Y-%m-%d")
+        completion_date = report["extracted_date"] or datetime.now().strftime(
+            "%Y-%m-%d"
+        )
 
         # Apply the match (same logic as auto-match)
         _apply_match(conn, payload.schedule_id, completion_date)
@@ -294,9 +343,7 @@ def audit_trail():
     debugging, and demo day.
     """
     with get_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM reports ORDER BY created_at DESC"
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM reports ORDER BY created_at DESC").fetchall()
     return [dict(row) for row in rows]
 
 

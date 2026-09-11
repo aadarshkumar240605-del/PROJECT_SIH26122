@@ -44,11 +44,16 @@ Field report (text / voice transcript)
 | Service | File | Run command | Endpoints |
 |---|---|---|---|
 | **Matching wrapper** | `backend/main.py` | `uvicorn main:app --port 8000` | `POST /match`, `POST /reload-index`, `GET /health` (+ `/docs`) |
-| **Legacy app** | `backend/main2.py` | `uvicorn main2:app --port 8001` | `/extract`, `/submit`, `/schedule`, `/review-queue`, `/confirm-match`, `/unplanned`, `/audit-trail`, `/dashboard`, `/activities`, `/ping` |
+| **Legacy app** | `backend/main2.py` | `uvicorn main2:app --port 8001` | `POST /submit` (NEW: text in → matches out), `/extract`, `/schedule`, `/review-queue`, `/confirm-match`, `/unplanned`, `/audit-trail`, `/dashboard`, `/activities`, `/ping` |
 
 ⚠️ **History:** `main.py` used to be the legacy app. It was replaced by the matching wrapper
 (Task 2), and the legacy app now lives in `main2.py`. Anyone running `uvicorn main:app` out
 of habit gets the matching service, not the old API.
+
+⚠️ **/submit is a one-call pipeline now:** it takes `{"report_text": "..."}` and returns
+`{"results": [...], "issues": [...]}` where each result is a full /match response. The old
+`{task, quantity, location, date, raw_text}` payload no longer works. BUT it has two open
+bugs — see §6 items 7 and 8.
 
 ## 3. File map (backend/)
 
@@ -158,17 +163,35 @@ Ollama + `qwen2.5:7b` are only needed for the real `/extract` endpoint (legacy a
 6. `requirements.txt` is missing the matching stack: add `sentence-transformers`,
    `numpy`, `pandas`, `openpyxl`. `pytest` is not installed in this environment — all
    test scripts are standalone `python file.py` runners on purpose.
+7. ~~BUG: `/submit` on main2 always returns 503~~ **FIXED 2026-09-10.** `main2.py`
+   now has a lifespan startup that loads the activity index (same policy as the
+   matching wrapper: missing file → server still boots, /submit 503s). Verified
+   with a mocked-extraction TestClient run: /submit returns 200 without any
+   manual index loading.
+8. ~~BUG: the new `/submit` never writes to the database~~ **FIXED 2026-09-10.**
+   `/submit` now inserts one `reports` row per matched activity:
+   `matched_activity_code` (new column, stores the Primavera activity_id string),
+   `confidence_score` on the legacy 0.0–1.0 scale (engine /100), and
+   `review_status` mapped from match_status (auto_linked→auto_applied,
+   review_queue→needs_review, unplanned→no_match). Verified: /review-queue,
+   /audit-trail and /dashboard serve real data after submissions.
+   **Still open (by design):** auto-APPLYING to `schedule_items` (marking a task
+   done) is not wired — it needs the Primavera Excel → `schedule_items` import
+   script first (§7 item 3). Until then `matched_schedule_id` stays NULL and
+   `/confirm-match` (which needs a real schedule id) only works for imported
+   activities.
 
 ## 7. Next steps (priority order)
 
-1. Add CORS to `main.py` (10 min, unblocks frontend).
+1. Add CORS to `main.py` (10 min, unblocks frontend). CORS already exists on main2.
 2. **Import script:** Primavera Excel → `schedule_items` (one source of truth).
-3. Wire `/submit` (main2) to `match_engine` via `contract.py`; unify the confidence
-   scale; auto-apply ≥75, review 40–75, unplanned <40.
-4. Optional convenience endpoint `POST /extract-and-match` on the wrapper so the
-   frontend sends raw text and gets matches back in one call.
-5. Frontend dashboard (biggest remaining chunk — see §8).
-6. Score fusion with location/date (fixes flag 2).
+   This also unlocks auto-apply: /submit already stores the Primavera
+   `matched_activity_code` on every report, so the import + a code→id lookup is
+   all that's missing to mark tasks done automatically.
+3. Frontend dashboard (biggest remaining chunk — see §8).
+4. Score fusion with location/date (fixes flag 2).
+5. Ask Member 5 to confirm the extractor's final output shape + whether the
+   Google-API switch (mentioned in test_pipeline.py) is real.
 
 ## 8. Frontend developer guide
 
@@ -182,12 +205,14 @@ port 8000 fails with a CORS policy error. Test scripts work because they aren't 
   trail, and the real `/extract` (needs Ollama running).
 
 **Submission flow (what to build):**
-1. User types/speaks a report → currently send to `/extract` (8001). It returns a LIST of
-   activities + issues — the UI must handle multiple results, not one.
-2. Map each activity to the `/match` contract client-side (`activity` →
-   `activity_description`, `date` → `actual_start`, `location` → `location`, others null) —
-   or wait for the planned `/extract-and-match` endpoint (§7.4) which removes this step.
-3. `POST /match` (8000) per activity → render the result card.
+1. User types/speaks a report → `POST /submit` (8001) with `{"report_text": "..."}`.
+   Response: `{"results": [list of /match results], "issues": [...]}` — the UI must
+   handle multiple results and surface `issues` (e.g. as warnings). NOTE: until bugs
+   7–8 in §6 are fixed, /submit 503s on a freshly started server, and nothing it
+   returns is persisted (review queue stays empty).
+2. Alternative two-step flow: `POST /extract` (8001) then map + `POST /match` (8000)
+   per activity (see contract.py for the exact mapping).
+3. Render each result per the badge rules below.
 
 **Rendering `match_status` (suggested):**
 - `auto_linked` → green badge, confidence % prominent ("Linked to L6-PIPING-1193 — 89.9%")

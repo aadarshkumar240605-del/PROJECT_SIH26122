@@ -21,6 +21,11 @@ CREATE TABLE IF NOT EXISTS reports (
     extracted_location   TEXT,                -- AI-extracted location
     extracted_date       TEXT,                -- AI-extracted date
     matched_schedule_id  INTEGER,            -- FK → schedule_items.id (NULL if no match)
+    matched_activity_code TEXT,              -- Primavera activity_id from the matching
+                                              -- engine (e.g. "L6-PIPING-1193"). Set even
+                                              -- when matched_schedule_id is NULL, because
+                                              -- the Primavera schedule may not be imported
+                                              -- into schedule_items yet.
     confidence_score     REAL,               -- how confident the matcher was (0.0–1.0)
     review_status        TEXT,               -- auto_applied / needs_review / rejected / no_match
     created_at           TEXT DEFAULT (datetime('now'))  -- when this report was received
