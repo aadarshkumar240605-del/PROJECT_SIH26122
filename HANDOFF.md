@@ -7,7 +7,56 @@ data, matches it to the official Primavera schedule, auto-updates what it is con
 and routes the rest to a human review queue.
 
 This document is the full working context for anyone continuing the backend/matching work.
-Last updated: 2026-09-10 (end of Tasks 1–5 + contract adapter).
+Last updated: 2026-09-11 (Expo mobile manager workspace).
+
+## 0. Mobile frontend handoff
+
+The frontend is an Expo SDK 57 React Native app using NativeWind. The app starts
+with a role picker in `frontend/App.tsx`:
+
+- `ManagerHome` is the implemented manager dashboard.
+- `WorkerPlaceholder` is intentionally temporary and is the worker-side starting point.
+- Keep the `Role` type and role picker intact when replacing the worker placeholder.
+
+The shared API client is `frontend/src/api.ts`. Reuse it instead of adding fetch
+logic inside worker screens. It reads `EXPO_PUBLIC_API_URL`; use
+`http://127.0.0.1:8001` for the same computer, `http://10.0.2.2:8001` for an
+Android emulator, or the laptop LAN address such as `http://192.168.1.14:8001`
+for a physical phone.
+
+Manager endpoints currently used:
+
+- `GET /ping`
+- `GET /dashboard`
+- `GET /schedule`
+- `GET /review-queue`
+- `POST /submit` with `{ "report_text": "..." }`
+
+Worker-side work should preserve the existing teal/green NativeWind visual
+language and use the current `global.css`, `tailwind.config.js`, and
+`nativewind-env.d.ts` setup. A natural next worker flow is: capture a daily
+report, show activity/status/quantity fields, submit through the shared API,
+and show the returned match result or extraction issues.
+
+### Mobile run commands
+
+Backend terminal:
+
+```bash
+cd backend
+python -m uvicorn main2:app --host 0.0.0.0 --port 8001 --reload
+```
+
+Frontend terminal:
+
+```bash
+cd frontend
+set EXPO_PUBLIC_API_URL=http://YOUR_LAPTOP_IP:8001
+npm.cmd run start -- --lan
+```
+
+Both devices must be on the same Wi-Fi. Keep both terminals running while
+testing with Expo Go.
 
 ---
 

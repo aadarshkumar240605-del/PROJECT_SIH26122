@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Project Pulse",
+    "slug": "project-pulse",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "com.sih26122.projectpulse"
+    },
+    "ios": {
+      "bundleIdentifier": "com.sih26122.projectpulse"
+    },
+    "plugins": [
+      "expo-asset",
+      "expo-font"
+    ]
+  }
+}

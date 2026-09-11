@@ -1,6 +1,10 @@
 fastapi
 uvicorn[standard]
 ollama
+numpy
+pandas
+openpyxl
+sentence-transformers
 pytest
 httpx
 python-dotenv

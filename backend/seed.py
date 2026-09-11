@@ -18,47 +18,47 @@ from database import get_db
 
 # ---------------------------------------------------------------------------
 # 25 schedule_items across 3 disciplines and 4 zones.
-# All start as 'pending' with a ~2-week planned window.
+# Deliberately varied demo statuses make the manager console useful on first run.
 # ---------------------------------------------------------------------------
 SCHEDULE_ITEMS = [
     # --- Civil (Zone A - Tank Farm) ---
-    (1,  "Excavation for tank foundation",      "civil",      "Zone A - Tank Farm",       "2026-09-01", "2026-09-07", None, "pending"),
-    (2,  "Concrete pouring for tank base",       "civil",      "Zone A - Tank Farm",       "2026-09-03", "2026-09-10", None, "pending"),
-    (3,  "Backfilling around tank pad",          "civil",      "Zone A - Tank Farm",       "2026-09-05", "2026-09-12", None, "pending"),
+    (1,  "Excavation for tank foundation",      "civil",      "Zone A - Tank Farm",       "2026-09-01", "2026-09-07", "2026-09-07", "done"),
+    (2,  "Concrete pouring for tank base",       "civil",      "Zone A - Tank Farm",       "2026-09-03", "2026-09-10", None, "in_progress"),
+    (3,  "Backfilling around tank pad",          "civil",      "Zone A - Tank Farm",       "2026-09-05", "2026-09-12", None, "flagged"),
     (4,  "Grading and leveling access road",     "civil",      "Zone A - Tank Farm",       "2026-09-08", "2026-09-14", None, "pending"),
 
     # --- Civil (Zone D - Control Room) ---
-    (5,  "Foundation work for control room",     "civil",      "Zone D - Control Room",    "2026-09-02", "2026-09-09", None, "pending"),
-    (6,  "Structural framing installation",      "civil",      "Zone D - Control Room",    "2026-09-06", "2026-09-14", None, "pending"),
+    (5,  "Foundation work for control room",     "civil",      "Zone D - Control Room",    "2026-09-02", "2026-09-09", "2026-09-09", "done"),
+    (6,  "Structural framing installation",      "civil",      "Zone D - Control Room",    "2026-09-06", "2026-09-14", None, "in_progress"),
     (7,  "Roof slab casting",                    "civil",      "Zone D - Control Room",    "2026-09-10", "2026-09-14", None, "pending"),
 
     # --- Piping (Zone A - Tank Farm) ---
-    (8,  "Pipe spool fabrication",               "piping",     "Zone A - Tank Farm",       "2026-09-01", "2026-09-08", None, "pending"),
-    (9,  "Pipe welding near tank 3",             "piping",     "Zone A - Tank Farm",       "2026-09-04", "2026-09-11", None, "pending"),
-    (10, "Hydro testing of tank inlet line",     "piping",     "Zone A - Tank Farm",       "2026-09-07", "2026-09-14", None, "pending"),
+    (8,  "Pipe spool fabrication",               "piping",     "Zone A - Tank Farm",       "2026-09-01", "2026-09-08", "2026-09-08", "done"),
+    (9,  "Pipe welding near tank 3",             "piping",     "Zone A - Tank Farm",       "2026-09-04", "2026-09-11", None, "in_progress"),
+    (10, "Hydro testing of tank inlet line",     "piping",     "Zone A - Tank Farm",       "2026-09-07", "2026-09-14", None, "flagged"),
 
     # --- Piping (Zone B - Pipeline Corridor) ---
-    (11, "Trench excavation for pipeline",       "piping",     "Zone B - Pipeline Corridor", "2026-09-01", "2026-09-10", None, "pending"),
-    (12, "16-inch pipeline laying",              "piping",     "Zone B - Pipeline Corridor", "2026-09-03", "2026-09-12", None, "pending"),
+    (11, "Trench excavation for pipeline",       "piping",     "Zone B - Pipeline Corridor", "2026-09-01", "2026-09-10", "2026-09-10", "done"),
+    (12, "16-inch pipeline laying",              "piping",     "Zone B - Pipeline Corridor", "2026-09-03", "2026-09-12", None, "in_progress"),
     (13, "Pipeline welding joints",              "piping",     "Zone B - Pipeline Corridor", "2026-09-05", "2026-09-14", None, "pending"),
     (14, "Pipeline pressure testing",            "piping",     "Zone B - Pipeline Corridor", "2026-09-08", "2026-09-14", None, "pending"),
     (15, "Pipe support installation",            "piping",     "Zone B - Pipeline Corridor", "2026-09-02", "2026-09-09", None, "pending"),
 
     # --- Electrical (Zone C - Substation) ---
-    (16, "Cable tray installation",              "electrical", "Zone C - Substation",      "2026-09-01", "2026-09-07", None, "pending"),
-    (17, "HT cable pulling",                     "electrical", "Zone C - Substation",      "2026-09-03", "2026-09-10", None, "pending"),
+    (16, "Cable tray installation",              "electrical", "Zone C - Substation",      "2026-09-01", "2026-09-07", "2026-09-07", "done"),
+    (17, "HT cable pulling",                     "electrical", "Zone C - Substation",      "2026-09-03", "2026-09-10", None, "in_progress"),
     (18, "Transformer foundation and mounting",  "electrical", "Zone C - Substation",      "2026-09-02", "2026-09-11", None, "pending"),
-    (19, "Switchgear panel installation",        "electrical", "Zone C - Substation",      "2026-09-05", "2026-09-12", None, "pending"),
-    (20, "Earthing and grounding work",          "electrical", "Zone C - Substation",      "2026-09-06", "2026-09-14", None, "pending"),
+    (19, "Switchgear panel installation",        "electrical", "Zone C - Substation",      "2026-09-05", "2026-09-12", None, "flagged"),
+    (20, "Earthing and grounding work",          "electrical", "Zone C - Substation",      "2026-09-06", "2026-09-14", "2026-09-14", "done"),
 
     # --- Electrical (Zone D - Control Room) ---
-    (21, "LT cable laying in control room",      "electrical", "Zone D - Control Room",    "2026-09-04", "2026-09-11", None, "pending"),
+    (21, "LT cable laying in control room",      "electrical", "Zone D - Control Room",    "2026-09-04", "2026-09-11", None, "in_progress"),
     (22, "Panel wiring and termination",         "electrical", "Zone D - Control Room",    "2026-09-07", "2026-09-14", None, "pending"),
     (23, "Lighting installation",                "electrical", "Zone D - Control Room",    "2026-09-08", "2026-09-14", None, "pending"),
 
     # --- Mixed (Zone B - Pipeline Corridor) ---
-    (24, "Cathodic protection installation",     "electrical", "Zone B - Pipeline Corridor", "2026-09-04", "2026-09-12", None, "pending"),
-    (25, "Road crossing bore for pipeline",      "civil",      "Zone B - Pipeline Corridor", "2026-09-03", "2026-09-10", None, "pending"),
+    (24, "Cathodic protection installation",     "electrical", "Zone B - Pipeline Corridor", "2026-09-04", "2026-09-12", "2026-09-12", "done"),
+    (25, "Road crossing bore for pipeline",      "civil",      "Zone B - Pipeline Corridor", "2026-09-03", "2026-09-10", None, "flagged"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -80,10 +80,18 @@ def seed():
     with get_db() as conn:
         # Seed schedule items
         conn.executemany(
-            """INSERT OR IGNORE INTO schedule_items
+                """INSERT INTO schedule_items
                (id, task_name, discipline, location,
                 planned_start, planned_end, actual_completion_date, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                      task_name = excluded.task_name,
+                      discipline = excluded.discipline,
+                      location = excluded.location,
+                      planned_start = excluded.planned_start,
+                      planned_end = excluded.planned_end,
+                      actual_completion_date = excluded.actual_completion_date,
+                      status = excluded.status""",
             SCHEDULE_ITEMS,
         )
 
