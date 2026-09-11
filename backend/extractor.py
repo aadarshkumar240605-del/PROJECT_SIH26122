@@ -46,22 +46,22 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Model config
 # ---------------------------------------------------------------------------
-_MODEL       = "qwen2.5:7b"
+_MODEL = "qwen2.5:7b"
 _OLLAMA_HOST = "http://localhost:11434"
 
 # ---------------------------------------------------------------------------
 # Relative-date tokens → day offsets from today
 # ---------------------------------------------------------------------------
 _RELATIVE_DATE_OFFSETS: dict[str, int] = {
-    "today":          0,
-    "this morning":   0,
+    "today": 0,
+    "this morning": 0,
     "this afternoon": 0,
-    "this evening":   0,
-    "tonight":        0,
-    "yesterday":     -1,
-    "last night":    -1,
+    "this evening": 0,
+    "tonight": 0,
+    "yesterday": -1,
+    "last night": -1,
     "day before yesterday": -2,
-    "tomorrow":       1,
+    "tomorrow": 1,
 }
 
 # Regex that matches any of the relative tokens (case-insensitive)
@@ -122,27 +122,23 @@ _COMPLETE_LANGUAGE_RE = re.compile(
 # ---------------------------------------------------------------------------
 _LOCATION_ALIASES: dict[str, str] = {
     # Zone A — Tank Farm
-    "zone a":             "Zone A - Tank Farm",
+    "zone a": "Zone A - Tank Farm",
     "zone a - tank farm": "Zone A - Tank Farm",
-    "tank farm":          "Zone A - Tank Farm",
-
+    "tank farm": "Zone A - Tank Farm",
     # Zone B — Pipeline Corridor
-    "zone b":                      "Zone B - Pipeline Corridor",
-    "zone b - pipeline corridor":  "Zone B - Pipeline Corridor",
-    "pipeline corridor":           "Zone B - Pipeline Corridor",
-
+    "zone b": "Zone B - Pipeline Corridor",
+    "zone b - pipeline corridor": "Zone B - Pipeline Corridor",
+    "pipeline corridor": "Zone B - Pipeline Corridor",
     # Zone C — Substation
     # "substation" is a distinctive enough term and all Zone C tasks
     # are substation tasks, so this alias is safe.
-    "zone c":               "Zone C - Substation",
-    "zone c - substation":  "Zone C - Substation",
-    "substation":           "Zone C - Substation",
-
+    "zone c": "Zone C - Substation",
+    "zone c - substation": "Zone C - Substation",
+    "substation": "Zone C - Substation",
     # Zone D — Control Room
-    "zone d":                  "Zone D - Control Room",
-    "zone d - control room":   "Zone D - Control Room",
-    "control room":            "Zone D - Control Room",
-
+    "zone d": "Zone D - Control Room",
+    "zone d - control room": "Zone D - Control Room",
+    "control room": "Zone D - Control Room",
     # NOTE: "Section D-2", "Section D2", "Site C", "Bay 7", "Line 24-*"
     # are NOT in the canonical location list and have no verified mapping.
     # They must return null until the project schedule explicitly defines them.
@@ -151,6 +147,7 @@ _LOCATION_ALIASES: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Deterministic report scanner — runs BEFORE trusting the LLM
 # ---------------------------------------------------------------------------
+
 
 def _scan_report_for_location(
     report_text: str,
@@ -182,9 +179,7 @@ def _scan_report_for_location(
             canonical = _LOCATION_ALIASES[alias]
             # Verify the mapped canonical location is still in the live DB list
             if not known_locations or canonical in known_locations:
-                logger.debug(
-                    "Direct alias match: %r → %r", alias, canonical
-                )
+                logger.debug("Direct alias match: %r → %r", alias, canonical)
                 return canonical
 
     # Pass 2: check canonical location strings verbatim
@@ -199,6 +194,7 @@ def _scan_report_for_location(
 # ---------------------------------------------------------------------------
 # Prompt builder — accepts known locations so the model never needs to guess
 # ---------------------------------------------------------------------------
+
 
 def _build_system_prompt(known_locations: list[str]) -> str:
     locations_block = (
@@ -236,19 +232,30 @@ For every construction activity or task mentioned, extract:
 
 - "activity": the construction task name only — nothing else.
   RULES for activity:
-    * Include ONLY the task or work description.
-    * Do NOT include the location, zone, site, section, bay, or area name.
-      Remove any phrase such as "in Zone B", "at Site C", "near tank 3",
-      "in the substation area", "for the control room", "in Section D-2".
+    * Preserve the full technical description from the report when it includes
+      specific technical details such as rack elevation, spool numbers, grid
+      references, floor levels, zone names, unit numbers, corridor names, or
+      other precise identifiers.
+    * Do NOT collapse the activity to a generic summary such as "Spool erection"
+      when the report gives the detailed description. Keep the specific task
+      wording, such as "Spool erection on north rack elevation 7.5m" or
+      "Concrete pour for column footing on Unit 7".
+    * The activity field must be descriptive enough that someone unfamiliar with
+      the report could identify exactly which work item it refers to.
+    * Do NOT include the location, zone, site, section, bay, or area name as part
+      of the activity text when that information is already captured separately in
+      the "location" field. However, when the report has technical detail that is
+      part of the work description, keep it in the activity text.
     * Do NOT start with a completion or status verb.
       Remove prefixes such as "Completed", "Finished", "Carried out",
       "Performed", "Conducted".
-    * Keep it short: aim for 2–5 words that name the task, nothing more.
+    * Keep it short but specific: aim for a precise task description that still
+      clearly identifies the work item without unnecessary narration.
     * One sentence = one activity unless it clearly describes two separate tasks.
 
   EXAMPLES (input phrase → correct activity value):
-    "Completed trench excavation in Zone B"
-      → activity: "Trench excavation"          location: "Zone B - Pipeline Corridor"
+    "Completed spool erection on north rack elevation 7.5 metres, Zone A piping corridor"
+      → activity: "Spool erection on north rack elevation 7.5m"  location: "Zone A - Tank Farm"
 
     "Cable laying in Section D-2 is 70% complete"
       → activity: "Cable laying"               location: null
@@ -269,6 +276,15 @@ For every construction activity or task mentioned, extract:
       → activity: "Pipe welding"               location: null
 
 - "location": one of the KNOWN PROJECT LOCATIONS listed above, or null.
+  IMPORTANT:
+    * Never return null for location when the report contains any location detail,
+      including zone names, rack references, corridor names, unit numbers,
+      floor levels, bay names, or other clear physical references.
+    * If the location is a zone, rack, corridor, or unit that maps to the project
+      locations list, use the exact known location string from the list above.
+    * If the report gives any location clue at all, do not default to null unless
+      it is clearly not a project location and no valid known location can be
+      matched.
 
 - "date": ISO date string (YYYY-MM-DD) if a date or relative time reference
   (today, yesterday, this morning) appears in the report; otherwise null.
@@ -409,6 +425,7 @@ Return ONLY this JSON structure, nothing else:
 # Deterministic post-processing
 # ---------------------------------------------------------------------------
 
+
 def _resolve_date(report_text: str, model_date: str | None) -> str:
     """
     Resolve the date for an activity.
@@ -476,7 +493,7 @@ def _validate_location(
     if not raw_location or not known_locations:
         return None
 
-    normalised   = raw_location.strip().lower()
+    normalised = raw_location.strip().lower()
     report_lower = report_text.strip().lower()
 
     for known in known_locations:
@@ -503,8 +520,8 @@ def _validate_location(
 
         # d. Word-level overlap (words > 4 chars only)
         if not matched:
-            raw_words   = {w for w in re.split(r"[\s\-–/]+", normalised) if len(w) > 4}
-            known_words = {w for w in re.split(r"[\s\-–/]+", k)          if len(w) > 4}
+            raw_words = {w for w in re.split(r"[\s\-–/]+", normalised) if len(w) > 4}
+            known_words = {w for w in re.split(r"[\s\-–/]+", k) if len(w) > 4}
             if raw_words and known_words and (raw_words & known_words):
                 matched = True
 
@@ -531,19 +548,20 @@ def _validate_location(
         if zone_match:
             zone_token = zone_match.group(0).lower()  # e.g. "zone b"
             if zone_token in report_lower:
-                return known   # both conditions met
+                return known  # both conditions met
 
         # Type ii: distinctive long words from the known location
         distinctive = {w for w in re.split(r"[\s\-–/]+", k) if len(w) > 4}
         for token in distinctive:
             if token in report_lower:
-                return known   # both conditions met
+                return known  # both conditions met
 
         # Condition 2 failed — report has no textual evidence for this location
         # even though it matched the schema.  Reject it.
         logger.debug(
             "Location %r matched schema (%r) but no evidence found in report text.",
-            raw_location, known,
+            raw_location,
+            known,
         )
         return None
 
@@ -573,14 +591,17 @@ def _clean_activity_name(name: str) -> str:
     # Applied to the cleaned name. First match wins.
     _CANONICAL_NAMES = [
         # Trench excavation variants
-        (re.compile(
-            r"^(pipeline\s+)?trench\s+digging$"
-            r"|^digging\s+(the\s+)?trench$"
-            r"|^digging\s+work\s+(for\s+(the\s+)?)?([\w]+\s+)?trench$"
-            r"|^([\w]+\s+)?trench\s+(digging|dug|dig)$"
-            r"|^pipeline\s+trench\s+excavation$",
-            re.IGNORECASE,
-        ), "Trench excavation"),
+        (
+            re.compile(
+                r"^(pipeline\s+)?trench\s+digging$"
+                r"|^digging\s+(the\s+)?trench$"
+                r"|^digging\s+work\s+(for\s+(the\s+)?)?([\w]+\s+)?trench$"
+                r"|^([\w]+\s+)?trench\s+(digging|dug|dig)$"
+                r"|^pipeline\s+trench\s+excavation$",
+                re.IGNORECASE,
+            ),
+            "Trench excavation",
+        ),
     ]
     for pattern, canonical in _CANONICAL_NAMES:
         if pattern.match(cleaned.strip()):
@@ -661,13 +682,12 @@ def _is_noise_activity(name: str, report_text: str) -> bool:
       - The name contains no domain-relevant words (fewer than 2 words
         from a minimum meaningful vocabulary).
     """
-    name_norm  = name.strip().lower()
+    name_norm = name.strip().lower()
     report_norm = report_text.strip().lower()
 
     # Activity is the whole report ± a few chars → noise
     if len(name_norm) > 0 and (
-        name_norm in report_norm and
-        len(name_norm) / len(report_norm) > 0.75
+        name_norm in report_norm and len(name_norm) / len(report_norm) > 0.75
     ):
         return True
 
@@ -749,7 +769,7 @@ def _rescue_pending_tasks(
         # We therefore check task+pending on the whole string, and apply the
         # blocker-only guard only when the ENTIRE string is a blocker with no
         # task content.
-        has_task    = bool(_TASK_KW.search(issue_str))
+        has_task = bool(_TASK_KW.search(issue_str))
         has_pending = bool(_PENDING_STATE.search(issue_str))
         # Only suppress rescue if blocker keywords appear WITHOUT any task keyword
         # (i.e. it's purely an administrative/approval issue, not a task + blocker)
@@ -758,10 +778,11 @@ def _rescue_pending_tasks(
 
     def _existing_names(acts: list[dict]) -> set[str]:
         return {a["activity"].strip().lower() for a in acts}
+
     # Resolve location and date once for the whole report (same logic as
     # _postprocess uses for each activity).
     report_location = _scan_report_for_location(report_text, known_locations)
-    resolved_date   = _resolve_date(report_text, None)
+    resolved_date = _resolve_date(report_text, None)
 
     surviving_issues: list[str] = []
 
@@ -778,7 +799,7 @@ def _rescue_pending_tasks(
         # separate issue so it is not lost.
         _SEPARATOR_RE = re.compile(r"\s*[—–]\s*|\s*;\s*")
         parts = _SEPARATOR_RE.split(issue, maxsplit=1)
-        task_part    = parts[0].strip()
+        task_part = parts[0].strip()
         blocker_part = parts[1].strip() if len(parts) > 1 else ""
 
         # Remove pending-state phrase from the task part only.
@@ -793,14 +814,15 @@ def _rescue_pending_tasks(
             r"^\s*(still|yet|now|also|and|but|is|was|are)\s+", re.IGNORECASE
         )
         raw_name = _TRAILING_FILLER.sub("", raw_name).strip(" .,;:-—")
-        raw_name = _LEADING_FILLER.sub("",  raw_name).strip(" .,;:-—")
+        raw_name = _LEADING_FILLER.sub("", raw_name).strip(" .,;:-—")
         name = _clean_activity_name(raw_name) if raw_name else issue
 
         # Duplicate guard
         if name.strip().lower() in _existing_names(activities):
             logger.debug(
                 "Pending-task rescue: duplicate activity %r already exists, "
-                "issue dropped.", name,
+                "issue dropped.",
+                name,
             )
             # Drop the issue; if there is a blocker clause, keep it as an issue
             if blocker_part:
@@ -823,21 +845,25 @@ def _rescue_pending_tasks(
             logger.debug(
                 "Pending-task rescue: location %r not in activity sentence for %r "
                 "— set to null.",
-                candidate_location, name,
+                candidate_location,
+                name,
             )
             candidate_location = None
         final_location = candidate_location
 
-        activities.append({
-            "activity":         name,
-            "location":         final_location,
-            "date":             resolved_date,
-            "status":           "pending",
-            "progress_percent": None,
-        })
+        activities.append(
+            {
+                "activity": name,
+                "location": final_location,
+                "date": resolved_date,
+                "status": "pending",
+                "progress_percent": None,
+            }
+        )
         logger.debug(
             "Pending-task rescue: moved issue %r → activity %r (status=pending).",
-            issue, name,
+            issue,
+            name,
         )
         # Task clause consumed. If there is a blocker clause after the separator
         # (e.g. "waiting for contractor approval"), keep it as a separate issue.
@@ -877,7 +903,7 @@ def _location_in_activity_context(
     If no sentence achieves a score ≥ 1, the function returns False (safe
     default — better to null the location than inherit a wrong one).
     """
-    sentences = re.split(r'(?<=[.!?])\s+', report_text.strip())
+    sentences = re.split(r"(?<=[.!?])\s+", report_text.strip())
     if not sentences:
         return False
 
@@ -886,13 +912,13 @@ def _location_in_activity_context(
         return False
 
     # Find the sentence with the most keyword overlap
-    best_sent  = None
+    best_sent = None
     best_score = 0
     for sent in sentences:
         score = sum(1 for w in name_words if w in sent.lower())
         if score > best_score:
             best_score = score
-            best_sent  = sent
+            best_sent = sent
 
     # No sentence matched at all → conservative null
     if best_score < 1 or best_sent is None:
@@ -925,11 +951,11 @@ def _merge_duplicate_activities(activities: list[dict]) -> list[dict]:
         return activities
 
     STATUS_RANK = {
-        "completed":   5,
-        "delayed":     4,
+        "completed": 5,
+        "delayed": 4,
         "in_progress": 3,
-        "pending":     2,
-        "unknown":     1,
+        "pending": 2,
+        "unknown": 1,
     }
 
     # Preserve insertion order; use (name_lower, location) as the merge key.
@@ -938,11 +964,11 @@ def _merge_duplicate_activities(activities: list[dict]) -> list[dict]:
 
     for act in activities:
         name_key = act["activity"].strip().lower()
-        loc_key  = act["location"]   # already canonical or None
-        key      = (name_key, loc_key)
+        loc_key = act["location"]  # already canonical or None
+        key = (name_key, loc_key)
 
         if key not in seen:
-            seen[key] = dict(act)    # first occurrence — copy
+            seen[key] = dict(act)  # first occurrence — copy
             order.append(key)
             continue
 
@@ -972,12 +998,13 @@ def _merge_duplicate_activities(activities: list[dict]) -> list[dict]:
 
         logger.debug(
             "Merged duplicate activity %r (location=%r): status=%r progress=%r",
-            existing["activity"], existing["location"],
-            existing["status"], existing["progress_percent"],
+            existing["activity"],
+            existing["location"],
+            existing["status"],
+            existing["progress_percent"],
         )
 
     return [seen[k] for k in order]
-
 
 
 # ---------------------------------------------------------------------------
@@ -1041,15 +1068,18 @@ def _rescue_from_vague_report(
 
             logger.debug(
                 "Vague-report rescue: keyword matched → activity=%r status=%r",
-                canonical_name, status,
+                canonical_name,
+                status,
             )
-            return [{
-                "activity":         canonical_name,
-                "location":         None,
-                "date":             resolved_date,
-                "status":           status,
-                "progress_percent": None,
-            }]
+            return [
+                {
+                    "activity": canonical_name,
+                    "location": None,
+                    "date": resolved_date,
+                    "status": status,
+                    "progress_percent": None,
+                }
+            ]
 
     return activities
 
@@ -1082,8 +1112,8 @@ def _postprocess(
     logged at DEBUG level.  They are NEVER added to the user-facing issues
     list — that list contains only construction/project issues from the report.
     """
-    activities    = []
-    issues        = list(raw_result.get("issues", []))
+    activities = []
+    issues = list(raw_result.get("issues", []))
 
     VALID_STATUSES = {"completed", "in_progress", "pending", "delayed", "unknown"}
 
@@ -1138,17 +1168,22 @@ def _postprocess(
             if candidate is not None:
                 # Verify the alias/token that produced this match is also in
                 # the report text (reuse _validate_location's evidence logic).
-                final_location = _validate_location(model_loc, known_locations, report_text)
+                final_location = _validate_location(
+                    model_loc, known_locations, report_text
+                )
                 if final_location is None:
                     # Alias matched but no evidence in report text → null
                     logger.debug(
                         "Location %r alias-matched to %r but no evidence in report — set to null.",
-                        model_loc, candidate,
+                        model_loc,
+                        candidate,
                     )
 
             if final_location is None:
                 # Tier 2: evidence-gated validation against the full report text
-                final_location = _validate_location(model_loc, known_locations, report_text)
+                final_location = _validate_location(
+                    model_loc, known_locations, report_text
+                )
                 if final_location is None:
                     logger.debug(
                         "Location %r from model not supported by report text — set to null.",
@@ -1165,7 +1200,8 @@ def _postprocess(
             ):
                 logger.debug(
                     "Location %r not in activity sentence for %r — set to null.",
-                    final_location, name,
+                    final_location,
+                    name,
                 )
                 final_location = None
 
@@ -1190,11 +1226,13 @@ def _postprocess(
             r"not\s+begun)\b",
             re.IGNORECASE,
         )
-        if status not in ("completed", "delayed") and _NOT_STARTED_RE.search(report_text):
+        if status not in ("completed", "delayed") and _NOT_STARTED_RE.search(
+            report_text
+        ):
             # Narrow check: only override if the phrase appears in the
             # activity's own sentence, not a neighbouring sentence
             if _location_in_activity_context.__module__:  # guard: helper available
-                sentences = re.split(r'(?<=[.!?])\s+', report_text.strip())
+                sentences = re.split(r"(?<=[.!?])\s+", report_text.strip())
                 name_words = [w for w in name.lower().split() if len(w) > 3]
                 best_sent, best_score = None, 0
                 for sent in sentences:
@@ -1218,13 +1256,15 @@ def _postprocess(
         # ---- date ----
         resolved_date = _resolve_date(report_text, item.get("date"))
 
-        activities.append({
-            "activity":         name,
-            "location":         final_location,
-            "date":             resolved_date,
-            "status":           status,
-            "progress_percent": progress_percent,
-        })
+        activities.append(
+            {
+                "activity": name,
+                "location": final_location,
+                "date": resolved_date,
+                "status": status,
+                "progress_percent": progress_percent,
+            }
+        )
 
     # Clean issues — remove empty strings and model meta-commentary only.
     # Internal post-processing warnings are logged, not added here.
@@ -1233,10 +1273,7 @@ def _postprocess(
         r"details to follow|no (further )?details",
         re.IGNORECASE,
     )
-    cleaned_issues = [
-        i for i in issues
-        if i and not META_COMMENTARY_RE.search(i)
-    ]
+    cleaned_issues = [i for i in issues if i and not META_COMMENTARY_RE.search(i)]
 
     # Rescue any pending construction tasks the LLM accidentally placed in
     # the issues list instead of extracting them as activities.
@@ -1254,7 +1291,9 @@ def _postprocess(
     # This handles vague reports like "made some progress on the trenches"
     # where the LLM's specificity rule suppressed extraction.
     activities = _rescue_from_vague_report(
-        activities, report_text, known_locations,
+        activities,
+        report_text,
+        known_locations,
         _resolve_date(report_text, None),
     )
 
@@ -1264,6 +1303,7 @@ def _postprocess(
 # ---------------------------------------------------------------------------
 # Location loader — fetches distinct locations from schedule_items
 # ---------------------------------------------------------------------------
+
 
 def load_known_locations() -> list[str]:
     """
@@ -1277,6 +1317,7 @@ def load_known_locations() -> list[str]:
     """
     try:
         from database import get_db
+
         with get_db() as conn:
             rows = conn.execute(
                 "SELECT DISTINCT location FROM schedule_items "
@@ -1291,6 +1332,7 @@ def load_known_locations() -> list[str]:
 # ---------------------------------------------------------------------------
 # Public function
 # ---------------------------------------------------------------------------
+
 
 def extract_report(report_text: str, known_locations: list[str] | None = None) -> dict:
     """Send a field report to Ollama (llama3.2:3b) and return structured data.
@@ -1332,7 +1374,7 @@ def extract_report(report_text: str, known_locations: list[str] | None = None) -
             model=_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": report_text},
+                {"role": "user", "content": report_text},
             ],
             options={"temperature": 0},
         )
@@ -1341,7 +1383,7 @@ def extract_report(report_text: str, known_locations: list[str] | None = None) -
 
         # Strip markdown code fences if the model wraps the JSON in them
         if raw_text.startswith("```"):
-            lines    = raw_text.splitlines()
+            lines = raw_text.splitlines()
             raw_text = "\n".join(lines[1:-1]).strip()
 
         parsed = json.loads(raw_text)
@@ -1370,7 +1412,9 @@ def extract_report(report_text: str, known_locations: list[str] | None = None) -
         logger.warning("Ollama returned non-JSON response: %s", exc)
         return {
             "activities": [],
-            "issues": [f"Extraction failed: model returned an unreadable response ({exc})."],
+            "issues": [
+                f"Extraction failed: model returned an unreadable response ({exc})."
+            ],
         }
 
     except Exception as exc:  # noqa: BLE001
